@@ -29,6 +29,7 @@ from utils.pose_utils import get_camera_from_tensor
 from utils.camera_utils import generate_interpolated_path
 from utils.camera_utils import visualizer
 import torchvision
+import cv2
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -55,16 +56,34 @@ def save_pose(path, quat_pose, train_cams, llffhold=2):
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, args):
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians, opt=args, shuffle=True)                                                                      
-    gaussians.training_setup(opt)
+    tb_writer = prepare_output_and_logger(dataset,args)
+    gaussians = GaussianModel(dataset.sh_degree) #sh degree < 3
+    if args.expand_train:
+        scene = Scene(dataset, gaussians, load_iteration=opt.iterations, opt=args, shuffle=True)     
+    else:        
+        scene = Scene(dataset, gaussians, opt=args, shuffle=True)
+
+    ## method 2
+    iterations = opt.iterations
+    if args.expand_train:
+        iterations = args.full_iter
+        gaussians.set_gaussian_grad_mode(1)
+        start_update_pos_iter = args.pos_est_iter
+
+    gaussians.training_setup(opt) #set Abam optimizer
+
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
     train_cams_init = scene.getTrainCameras().copy()
+
     os.makedirs(scene.model_path + 'pose', exist_ok=True)
-    save_pose(scene.model_path + 'pose' + "/pose_org.npy", gaussians.P, train_cams_init)
+    
+    if args.expand_train:
+        save_pose(scene.model_path + 'pose' + "/pose_org_PIGS.npy", gaussians.P, train_cams_init) #before training pose
+    else:
+        save_pose(scene.model_path + 'pose' + "/pose_org.npy", gaussians.P, train_cams_init) #before training pose
+    
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -73,11 +92,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
+    progress_bar = tqdm(range(first_iter, iterations), desc="Training progress")
     first_iter += 1
 
     start = perf_counter()
-    for iteration in range(first_iter, opt.iterations + 1):        
+    for iteration in range(first_iter, iterations + 1):        
         # if network_gui.conn == None:
         #     network_gui.try_connect()
         # while network_gui.conn != None:
@@ -92,7 +111,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         #             break
         #     except Exception as e:
         #         network_gui.conn = None
-
+        if args.expand_train and start_update_pos_iter + 1 == iteration:
+            gaussians.set_gaussian_grad_mode(0)
+            gaussians.training_setup(opt)
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -100,15 +121,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if args.optim_pose==False:
             gaussians.P.requires_grad_(False)
 
-        # Every 1000 its we increase the levels of SH up to a maximum degree
+        #Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
-            gaussians.oneupSHdegree()
-
+            if args.expand_train:
+                if start_update_pos_iter <= iteration:
+                    gaussians.oneupSHdegree()
+            else:
+                gaussians.oneupSHdegree()
         # Pick a random Camera
         if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
+            viewpoint_stack = scene.getTrainCameras().copy() #class camera list
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
-        pose = gaussians.get_RT(viewpoint_cam.uid)
+        pose = gaussians.get_RT(viewpoint_cam.uid) #7
 
         # Render
         if (iteration - 1) == debug_from:
@@ -140,15 +164,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration % 10 == 0:
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
-            if iteration == opt.iterations:
+            if iteration == iterations:
                 progress_bar.close()
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
-                save_pose(scene.model_path + 'pose' + f"/pose_{iteration}.npy", gaussians.P, train_cams_init)
+                scene.save(iteration,args.expand_train)
+                if args.expand_train:
+                    save_pose(scene.model_path + 'pose' + f"/pose_{iteration}_PIGS.npy", gaussians.P, train_cams_init)
+                    pose = np.load(scene.model_path + 'pose' + f"/pose_{iteration}_PIGS.npy")
+                    visualizer(pose,  ["green" for _ in pose], scene.model_path + 'pose' + f"/pose_optimized.png")
+                else:
+                    save_pose(scene.model_path + 'pose' + f"/pose_{iteration}.npy", gaussians.P, train_cams_init)
 
             # Densification
             # if iteration < opt.densify_until_iter:
@@ -164,7 +193,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 #     gaussians.reset_opacity()
 
             # Optimizer step
-            if iteration < opt.iterations:
+            if iteration < iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
@@ -181,7 +210,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     # print("instantsplat_train_time_mean: ", train_time.mean())
     # print("instantsplat_train_time_median: ", np.median(train_time))
 
-def prepare_output_and_logger(args):    
+def prepare_output_and_logger(args,opts):    
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
@@ -198,7 +227,10 @@ def prepare_output_and_logger(args):
     # Create Tensorboard writer
     tb_writer = None
     if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(args.model_path)
+        if opts.expand_train:
+            tb_writer = SummaryWriter(f"{args.model_path}/tb_PIGS")
+        else:
+            tb_writer = SummaryWriter(f"{args.model_path}/tb")
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
@@ -226,7 +258,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                         pose = scene.gaussians.get_RT_test(viewpoint.uid)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs, camera_pose=pose)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    if tb_writer and (idx < 5):
+                    if tb_writer and (idx < 10):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
@@ -254,17 +286,24 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[500, 800, 1000, 1500, 2000, 3000, 4000, 5000, 6000, 7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1,10,50,100,300,500,800,1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--scene", type=str, default=None)
     parser.add_argument("--n_views", type=int, default=None)
+    parser.add_argument("--full_views", type=int, default=None)
     parser.add_argument("--get_video", action="store_true")
     parser.add_argument("--optim_pose", action="store_true")
+    parser.add_argument("--expand_train", action="store_true")
+    parser.add_argument("--for_eval_train", action="store_true")
+    parser.add_argument("--full_iter", type=int, default=0)
+    parser.add_argument("--pos_est_iter", type=int, default=0)
+
+
     args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
+    args.save_iterations.append(args.full_iter if args.full_iter != 0 else args.iterations)
 
     os.makedirs(args.model_path, exist_ok=True)
     

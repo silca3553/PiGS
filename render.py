@@ -49,6 +49,7 @@ def render_set_optimize(model_path, name, iteration, views, gaussians, pipeline,
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
 
+    ## camera position만 update하므로 비활성화.
     gaussians._xyz.requires_grad_(False)
     gaussians._features_dc.requires_grad_(False)
     gaussians._features_rest.requires_grad_(False)
@@ -57,7 +58,9 @@ def render_set_optimize(model_path, name, iteration, views, gaussians, pipeline,
     gaussians._rotation.requires_grad_(False)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        # num_iter = 200
+        # num_iter = 500
+        ## train_joiunt에서 init_RT_seq,training_setup 호출하는 것 과정과 비슷. 
+        ## camera position의 tensor화, autograd 활성화, optimizer에 연결
         num_iter = args.optim_test_pose_iter
         camera_pose = get_tensor_from_camera(view.world_view_transform.transpose(0, 1))
 
@@ -89,7 +92,7 @@ def render_set_optimize(model_path, name, iteration, views, gaussians, pipeline,
         for iteration in range(num_iter):
             rendering = render(view, gaussians, pipeline, background, camera_pose=torch.cat([camera_tensor_q, camera_tensor_T]))["render"]
             loss = torch.abs(gt - rendering).mean()
-            if iteration%10==0:
+            if iteration%100==0:
                 print(iteration, loss.item())
             loss.backward()
 
@@ -114,12 +117,11 @@ def render_set_optimize(model_path, name, iteration, views, gaussians, pipeline,
         opt_pose = torch.cat([camera_tensor_q, camera_tensor_T])
         print(opt_pose-camera_pose)
         rendering_opt = render(view, gaussians, pipeline, background, camera_pose=opt_pose)["render"]
-            
         torchvision.utils.save_image(
-            rendering_opt, os.path.join(render_path, "{0:05d}".format(idx) + ".png")
+            rendering_opt, os.path.join(render_path, view.image_name + ".png")
         )
         torchvision.utils.save_image(
-            gt, os.path.join(gts_path, "{0:05d}".format(idx) + ".png")
+            gt, os.path.join(gts_path, view.image_name + ".png")
         )
 
 
@@ -175,13 +177,14 @@ if __name__ == "__main__":
     parser.add_argument("--n_views", default=None, type=int)
     parser.add_argument("--scene", default=None, type=str)
     parser.add_argument("--optim_test_pose_iter", default=500, type=int)
+    parser.add_argument("--expand_train", action="store_true")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
     # Initialize system state (RNG)
     # safe_state(args.quiet)
 
-    render_sets(
+    render_sets( ##test set을 처음 train set으로만 train했던 gaussian에 대해 camera position만 학습. 각 image 당 500 iter. rendering 결과 image 저장.
         model.extract(args),
         args.iteration,
         pipeline.extract(args),

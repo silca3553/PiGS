@@ -42,14 +42,15 @@ def readImages(renders_dir, gt_dir):
         image_names.append(fname)
     return renders, gts, image_names
 
-def read_colmap_gt_pose(gt_pose_path, llffhold=2):
+def read_colmap_gt_pose(gt_pose_path, image_names):
     # colmap_cam_extrinsics = read_extrinsics_binary(gt_pose_path + '/triangulated/images.bin')
     colmap_cam_extrinsics = read_extrinsics_binary(gt_pose_path + '/sparse/0/images.bin')
     train_pose=[]
     print("Loading colmap gt train pose:")
+    i=0
     for idx, key in enumerate(colmap_cam_extrinsics):
-        if idx % llffhold == 0:
-            extr = colmap_cam_extrinsics[key]
+        extr = colmap_cam_extrinsics[key]
+        if image_names[i] == extr.name[:-4]:
             print(idx, extr.name)
             R = np.transpose(qvec2rotmat(extr.qvec))
             T = np.array(extr.tvec)
@@ -57,6 +58,9 @@ def read_colmap_gt_pose(gt_pose_path, llffhold=2):
             pose[:3, :3] = R
             pose[:3, 3] = T
             train_pose.append(pose)
+            i+=1
+        if i==len(image_names):
+            break
     colmap_pose = np.array(train_pose)
     return colmap_pose
 
@@ -100,7 +104,7 @@ def evaluate(args):
     print("")
 
     for scene_dir in args.model_paths:
-        try:
+        #try:
             print("Scene:", scene_dir)
             full_dict[scene_dir] = {}
             per_view_dict[scene_dir] = {}
@@ -110,6 +114,8 @@ def evaluate(args):
             test_dir = Path(scene_dir) / "test"
 
             for method in os.listdir(test_dir):
+                if int(method.split("_")[-1]) != args.iteration:
+                    continue
                 print("Method:", method)
 
                 full_dict[scene_dir][method] = {}
@@ -123,7 +129,6 @@ def evaluate(args):
                 gt_dir = method_dir/ "gt"
                 renders_dir = method_dir / "renders"
                 renders, gts, image_names = readImages(renders_dir, gt_dir)
-
                 ssims = []
                 psnrs = []
                 lpipss = []
@@ -149,24 +154,48 @@ def evaluate(args):
                                                             "PSNR": {name: psnr for psnr, name in zip(torch.tensor(psnrs).tolist(), image_names)},
                                                             "LPIPS": {name: lp for lp, name in zip(torch.tensor(lpipss).tolist(), image_names)}})
 
-            with open(scene_dir + "/results.json", 'w') as fp:
+            if args.expand_train:
+                result_name = "/results_PIGS.json"
+                per_view_mame = "/per_view_PIGS.json"
+            else:
+                result_name = "/results.json"
+                per_view_mame = "/per_view.json"
+
+            with open(scene_dir + result_name, 'w') as fp:
                 json.dump(full_dict[scene_dir], fp, indent=True)
-            with open(scene_dir + "/per_view.json", 'w') as fp:
+            with open(scene_dir + per_view_mame, 'w') as fp:
                 json.dump(per_view_dict[scene_dir], fp, indent=True)
 
 
             
             ##### -------  pose_metric ------- #####
             pose_path = Path(scene_dir) / 'pose'
-            pose_ours = np.load(pose_path / f'pose_{args.iteration}.npy')
-            pose_colmap = read_colmap_gt_pose(args.gt_pose_path)
+            if args.expand_train:
+                pose_ours = np.load(pose_path / f'pose_{args.iteration}_PIGS.npy')
+            else:
+                pose_ours = np.load(pose_path / f'pose_{args.iteration}.npy')
+
+            ##전체 gt position 정보를 담은 cameras.bin에서 train image와 matching 되는 position만 뽑음.
+                        ##전체 gt position 정보를 담은 cameras.bin에서 train image와 matching 되는 position만 뽑음.
+            if args.expand_train:
+                file_path = scene_dir + 'full_train_images_PIGS.json'
+                with open(file_path, 'r') as file:
+                    data = json.load(file)
+                    train_name_list = data['image_name']
+            else:
+                file_path = scene_dir + 'cameras.json'
+                with open(file_path, 'r') as file:
+                    data = json.load(file)
+                    train_name_list = [item['img_name'] for item in data if 'img_name' in item]
+            
+            print(file_path)
+            pose_colmap = read_colmap_gt_pose(args.gt_pose_path,train_name_list)
 
             # sample sparse view
-            indices = np.linspace(0, pose_colmap.shape[0] - 1, args.n_views, dtype=int)
-            print("\nCalculating pose metric, train_pose_idx: ", indices)
-            tmp_pose_colmap = [pose_colmap[i] for i in indices]
-            pose_colmap = tmp_pose_colmap
-            
+            # indices = np.linspace(0, pose_colmap.shape[0] - 1, args.n_views, dtype=int)
+            # print("\nCalculating pose metric, train_pose_idx: ", indices)
+            # tmp_pose_colmap = [pose_colmap[i] for i in indices]
+            # pose_colmap = tmp_pose_colmap
             
             # start to align
             pose_ours = torch.from_numpy(pose_ours)
@@ -182,7 +211,7 @@ def evaluate(args):
             pose = np.array(pose_list)
             poses_gt = torch.from_numpy(pose)
 
-             # align scale first
+            # align scale first
             trans_gt_align, trans_est_align, _ = align_pose(poses_gt[:, :3, -1].numpy(),
                                                                 pose_ours[:, :3, -1].numpy())
             poses_gt[:, :3, -1] = torch.from_numpy(trans_gt_align)
@@ -201,7 +230,12 @@ def evaluate(args):
             print("\n")
             
             plot_pose(poses_gt, c2ws_est_aligned, pose_path, args)
-            with open(pose_path / f"pose_eval.txt", 'w') as f:
+            if args.expand_train:
+                file_name = "pose_eval_PIGS.txt"
+            else:
+                file_name = "pose_eval.txt"
+
+            with open(pose_path / file_name, 'w') as f:
                 f.write("RPE_trans: {:.04f}, RPE_rot: {:.04f}, ATE: {:.04f}".format(
                     rpe_trans*100,
                     rpe_rot * 180 / np.pi,
@@ -210,8 +244,8 @@ def evaluate(args):
             
             
 
-        except:
-            print("Unable to compute metrics for model", scene_dir)
+        #except:
+            #print("Unable to compute metrics for model", scene_dir)
 
 if __name__ == "__main__":
     device = torch.device("cuda:0")
@@ -223,5 +257,6 @@ if __name__ == "__main__":
     parser.add_argument('--gt_pose_path', type=str, default=None)
     parser.add_argument('--iteration', type=int, default=1000)    
     parser.add_argument("--n_views", default=None, type=int)
+    parser.add_argument("--expand_train", action="store_true")
     args = parser.parse_args()
     evaluate(args)

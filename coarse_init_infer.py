@@ -9,11 +9,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.sys.path.append(os.path.abspath(os.path.join(BASE_DIR, "submodules", "dust3r")))
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
-from dust3r.inference import inference
-from dust3r.model import AsymmetricCroCo3DStereo
-from dust3r.utils.device import to_numpy
-from dust3r.image_pairs import make_pairs
-from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
+from submodules.dust3r.dust3r.inference import inference
+from submodules.dust3r.dust3r.model import AsymmetricCroCo3DStereo
+from submodules.dust3r.dust3r.utils.device import to_numpy
+from submodules.dust3r.dust3r.image_pairs import make_pairs
+from submodules.dust3r.dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 from utils.dust3r_utils import  compute_global_alignment, load_images, storePly, save_colmap_cameras, save_colmap_images
 
 def get_args_parser():
@@ -49,6 +49,7 @@ if __name__ == '__main__':
     n_views = args.n_views
     img_base_path = args.img_base_path
     img_folder_path = os.path.join(img_base_path, "images")
+    print("img_folder_path : ",img_base_path)
     os.makedirs(img_folder_path, exist_ok=True)
     model = AsymmetricCroCo3DStereo.from_pretrained(model_path).to(device)
     ##########################################################################################################################################################################################
@@ -68,13 +69,18 @@ if __name__ == '__main__':
     start_time = time.time()
     ##########################################################################################################################################################################################
     pairs = make_pairs(images, scene_graph='complete', prefilter=None, symmetrize=True)
-    output = inference(pairs, model, args.device, batch_size=batch_size)
+    print("batch size :",batch_size)
+    output = inference(pairs, model, args.device, batch_size=batch_size) #dust3r result pairs list
+    print("output : ",output.keys())
+    print("pred1 : ",output['pred1'].keys())
+    print("pred2 : ",output['pred2'].keys())
     output_colmap_path=img_folder_path.replace("images", "sparse/0")
     os.makedirs(output_colmap_path, exist_ok=True)
 
-    scene = global_aligner(output, device=args.device, mode=GlobalAlignerMode.PointCloudOptimizer)
-    loss = compute_global_alignment(scene=scene, init="mst", niter=niter, schedule=schedule, lr=lr, focal_avg=args.focal_avg)
-    scene = scene.clean_pointcloud()
+    scene = global_aligner(output, device=args.device, mode=GlobalAlignerMode.PointCloudOptimizer) #set GlobalAlignerMode.PointCloudOptimizer model
+    loss = compute_global_alignment(scene=scene, init="mst", niter=niter, schedule=schedule, lr=lr, focal_avg=args.focal_avg) #run global alignment (forward, backward)
+    print(f"Max allocated memory: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB")
+    scene = scene.clean_pointcloud() #confidence-aware downsampling
 
     imgs = to_numpy(scene.imgs)
     focals = scene.get_focals()
@@ -88,6 +94,7 @@ if __name__ == '__main__':
     print(f"Time taken for {n_views} views: {end_time-start_time} seconds")
 
     # save
+    print("output_colmap_path : ",output_colmap_path)
     save_colmap_cameras(ori_size, intrinsics, os.path.join(output_colmap_path, 'cameras.txt'))
     save_colmap_images(poses, os.path.join(output_colmap_path, 'images.txt'), train_img_list)
 

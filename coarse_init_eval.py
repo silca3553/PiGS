@@ -9,11 +9,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.sys.path.append(os.path.abspath(os.path.join(BASE_DIR, "submodules", "dust3r")))
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
-from dust3r.inference import inference
-from dust3r.model import AsymmetricCroCo3DStereo
-from dust3r.utils.device import to_numpy
-from dust3r.image_pairs import make_pairs
-from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
+from submodules.dust3r.dust3r.inference import inference
+from submodules.dust3r.dust3r.model import AsymmetricCroCo3DStereo
+from submodules.dust3r.dust3r.utils.device import to_numpy
+from submodules.dust3r.dust3r.image_pairs import make_pairs
+from submodules.dust3r.dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 from utils.dust3r_utils import  compute_global_alignment, load_images, storePly, save_colmap_cameras, save_colmap_images
 
 def get_args_parser():
@@ -54,18 +54,18 @@ if __name__ == '__main__':
     ##########################################################################################################################################################################################
     
     train_img_list = sorted(os.listdir(os.path.join(img_base_path, "images")))
-    if args.llffhold > 0:
+    if args.llffhold > 0: #even index 거르기
         train_img_list = [c for idx, c in enumerate(train_img_list) if (idx+1) % args.llffhold != 0]
     
     # sample sparse view
-    indices = np.linspace(0, len(train_img_list) - 1, n_views, dtype=int)
+    indices = np.linspace(0, len(train_img_list) - 1, n_views, dtype=int) #12 개중에 n_views개 고르기
     print(indices)
     tmp_img_list = [train_img_list[i] for i in indices]
     train_img_list = tmp_img_list
     
     assert len(train_img_list)==n_views, f"Number of images in the folder is not equal to {n_views}"
     
-    if len(os.listdir(img_folder_path)) != len(train_img_list):
+    if len(os.listdir(img_folder_path)) != len(train_img_list): #copy image to new directory
         for img_name in train_img_list:
             src_path = os.path.join(img_base_path, "images", img_name)
             tgt_path = os.path.join(img_folder_path, img_name)

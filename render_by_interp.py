@@ -28,10 +28,15 @@ import numpy as np
 import imageio
 
 
-def save_interpolate_pose(model_path, iter, n_views):
+def save_interpolate_pose(model_path, iter, args):
+    if args.expand_train:
+        org_pose = np.load(model_path + f"pose/pose_{iter}_PIGS.npy")
+        visualizer(org_pose, ["green" for _ in org_pose], model_path + "pose/poses_optimized.png")
+    else:
+        org_pose = np.load(model_path + f"pose/pose_{iter}.npy")
+        visualizer(org_pose, ["green" for _ in org_pose], model_path + "pose/poses_optimized.png")
 
-    org_pose = np.load(model_path + f"pose/pose_{iter}.npy")
-    visualizer(org_pose, ["green" for _ in org_pose], model_path + "pose/poses_optimized.png")
+    n_views = len(org_pose)
     n_interp = int(10 * 30 / n_views)  # 10second, fps=30
     all_inter_pose = []
     for i in range(n_views-1):
@@ -46,8 +51,8 @@ def save_interpolate_pose(model_path, iter, n_views):
         tmp_view[:3, 3] = p[:3, 3]
         inter_pose_list.append(tmp_view)
     inter_pose = np.stack(inter_pose_list, 0)
-    visualizer(inter_pose, ["blue" for _ in inter_pose], model_path + "pose/poses_interpolated.png")
-    np.save(model_path + "pose/pose_interpolated.npy", inter_pose)
+    visualizer(inter_pose, ["blue" for _ in inter_pose], model_path + "pose/poses_video.png")
+    np.save(model_path + "pose/pose_video.npy", inter_pose)
 
 
 def images_to_video(image_folder, output_video_path, fps=30):
@@ -95,7 +100,7 @@ def render_sets(
 ):
 
     # Applying interpolation
-    save_interpolate_pose(dataset.model_path, iteration, args.n_views)
+    save_interpolate_pose(dataset.model_path, iteration, args)
 
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
@@ -117,7 +122,10 @@ def render_sets(
 
     if args.get_video:
         image_folder = os.path.join(dataset.model_path, f'interp/ours_{args.iteration}/renders')
-        output_video_file = os.path.join(dataset.model_path, f'{args.scene}_{args.n_views}_view.mp4')
+        if args.expand_train:
+            output_video_file = os.path.join(dataset.model_path, f'{args.scene}_{args.n_views}_view_PIGS.mp4')
+        else:
+            output_video_file = os.path.join(dataset.model_path, f'{args.scene}_{args.n_views}_view.mp4')
         images_to_video(image_folder, output_video_file, fps=30)
 
 
@@ -134,6 +142,7 @@ if __name__ == "__main__":
     parser.add_argument("--get_video", action="store_true")
     parser.add_argument("--n_views", default=None, type=int)
     parser.add_argument("--scene", default=None, type=str)
+    parser.add_argument("--expand_train", action="store_true")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 

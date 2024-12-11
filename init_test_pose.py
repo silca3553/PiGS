@@ -10,11 +10,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.sys.path.append(os.path.abspath(os.path.join(BASE_DIR, "submodules", "dust3r")))
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
-from dust3r.inference import inference
-from dust3r.model import AsymmetricCroCo3DStereo
-from dust3r.utils.device import to_numpy
-from dust3r.image_pairs import make_pairs
-from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
+from submodules.dust3r.dust3r.inference import inference
+from submodules.dust3r.dust3r.model import AsymmetricCroCo3DStereo
+from submodules.dust3r.dust3r.utils.device import to_numpy
+from submodules.dust3r.dust3r.image_pairs import make_pairs
+from submodules.dust3r.dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 from utils.dust3r_utils import  (compute_global_alignment, load_images, storePly, save_colmap_cameras, save_colmap_images, 
                                  round_python3, rigid_points_registration)
 
@@ -34,10 +34,10 @@ def get_args_parser():
     parser.add_argument("--llffhold", type=int, default=2)
     parser.add_argument("--n_views", type=int, default=12)
     parser.add_argument("--img_base_path", type=str, default="/home/workspace/datasets/instantsplat/Tanks_dust3r/Barn/24_views")
-
+    parser.add_argument("--expand_train", action="store_true")
     return parser
 
-if __name__ == '__main__':
+if __name__ == '__main__': #train+test (21)에 대해 따로 dust3r+global 진행하고 기존에 train으로 학습한 pcd 와 정합, position image.text에 저장.
     
     parser = get_args_parser()
     args = parser.parse_args()
@@ -80,31 +80,29 @@ if __name__ == '__main__':
         focal_path = os.path.join(img_base_path, f"dust3r_{n_views}_views", "sparse/0", "focal.npy")
         preset_focal = np.load(focal_path)     # load focal calculated by dust3r_coarse_geometry_initialization
 
-
-
     #---------------- (3) Get N_views pointcloud and 12 test pose (define as n1) ---------------- 
-    if len(os.listdir(all_img_folder)) != len(test_img_list):
+    if len(os.listdir(all_img_folder)) != len(test_img_list)+len(test_img_list): #train image 9개 copy
         for img_name in test_img_list:
             src_path = os.path.join(img_base_path, "images", img_name)
             tgt_path = os.path.join(all_img_folder, "1_"+img_name)
             print(src_path, tgt_path)
             shutil.copy(src_path, tgt_path)
-    if len(os.listdir(all_img_folder)) != len(train_img_list):
+    if len(os.listdir(all_img_folder)) != len(train_img_list)+len(test_img_list): #test image 12개 copy
         for img_name in train_img_list:
             src_path = os.path.join(img_base_path, "images", img_name)
             tgt_path = os.path.join(all_img_folder, "0_"+img_name)
             print(src_path, tgt_path)
             shutil.copy(src_path, tgt_path)
-    
     # # read all images
     # all_img_folder = os.path.join(img_base_path, "images")
+    
     images, ori_size = load_images(all_img_folder, size=512)
     print("ori_size", ori_size)
     pairs = make_pairs(images, scene_graph='complete', prefilter=None, symmetrize=True)    
     output = inference(pairs, model, args.device, batch_size=batch_size)
     test_output_colmap_path=all_img_folder.replace("images", "sparse/0")
     os.makedirs(test_output_colmap_path, exist_ok=True)
-
+    # test + train 21개 image에 대한 dust3r, global alignment 수행
     scene = global_aligner(output, device=args.device, mode=GlobalAlignerMode.PointCloudOptimizer)
     loss = compute_global_alignment(scene, init="mst", niter=niter, schedule=schedule, lr=lr, focal_avg=args.focal_avg, known_focal=preset_focal[0][0])   
     all_poses = to_numpy(scene.get_im_poses())
@@ -128,9 +126,9 @@ if __name__ == '__main__':
 
     #---------------- (4) Applying pointcloud registration & Calculate transform_matrix & Save initial_test_pose---------------- ##########
     # compute transform that goes from cam to world
-    train_pts3d_n1 = torch.from_numpy(train_pts3d_n1)
-    train_pts3d_m1 = torch.from_numpy(train_pts3d_m1)
-    s, R, T = rigid_points_registration(train_pts3d_n1, train_pts3d_m1)
+    train_pts3d_n1 = torch.from_numpy(train_pts3d_n1) #after train with 21 view
+    train_pts3d_m1 = torch.from_numpy(train_pts3d_m1) #train with 9 view before
+    s, R, T = rigid_points_registration(train_pts3d_n1, train_pts3d_m1) #pts matching
 
     transform_matrix = torch.eye(4)
     transform_matrix[:3, :3] = R

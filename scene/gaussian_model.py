@@ -203,10 +203,10 @@ class GaussianModel:
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
-        print("Number of points at initialisation : ", fused_point_cloud.shape[0])
+        print("Number of points at initialisation : ", fused_point_cloud.shape)
 
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
-        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3) #log(root(dist)) 를 x,y,z 개별적으로
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 
@@ -220,7 +220,7 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def training_setup(self, training_args):
+    def training_setup(self, training_args): #learning rate 초기화, scheduler 함수 세팅
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -234,7 +234,7 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
         ]
 
-        l_cam = [{'params': [self.P],'lr': training_args.rotation_lr*0.1, "name": "pose"},]
+        l_cam = [{'params': [self.P],'lr': training_args.rotation_lr*0.3, "name": "pose"},]
         # l_cam = [{'params': [self.P],'lr': training_args.rotation_lr, "name": "pose"},]
 
         l += l_cam
@@ -253,6 +253,35 @@ class GaussianModel:
                                                     # lr_final=training_args.position_lr_final*self.spatial_lr_scale*10,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=1000)
+
+    def set_gaussian_grad_mode(self, mode):
+        if mode == 1:
+            print("training mode : update only positions")
+            self._xyz.requires_grad_(False)
+            self._features_dc.requires_grad_(False)
+            self._features_rest.requires_grad_(False)
+            self._opacity.requires_grad_(False)
+            self._scaling.requires_grad_(False)
+            self._rotation.requires_grad_(False)
+            self.P.requires_grad_(True)
+        elif mode == 2:
+            print("training mode : update only gaussians")
+            self._xyz.requires_grad_(True)
+            self._features_dc.requires_grad_(True)
+            self._features_rest.requires_grad_(True)
+            self._opacity.requires_grad_(True)
+            self._scaling.requires_grad_(True)
+            self._rotation.requires_grad_(True)
+            self.P.requires_grad_(False)
+        else:
+            print("training mode : update gaussians & positions")
+            self._xyz.requires_grad_(True)
+            self._features_dc.requires_grad_(True)
+            self._features_rest.requires_grad_(True)
+            self._opacity.requires_grad_(True)
+            self._scaling.requires_grad_(True)
+            self._rotation.requires_grad_(True)
+            self.P.requires_grad_(True)
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -337,7 +366,8 @@ class GaussianModel:
         rots = np.zeros((xyz.shape[0], len(rot_names)))
         for idx, attr_name in enumerate(rot_names):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
-
+        
+        #params
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
