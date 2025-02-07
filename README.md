@@ -1,5 +1,5 @@
 # PiGS : COLMAP-free Gaussian Splatting Using Prior Gaussians
-This personal project is implemented for the Research Project 1 (CSED499I-01) course at POSTECH.
+This personal project is implemented for the Research Project 1 (CSED499I) course at POSTECH.
 #### PiGS is a model that performs Gaussian Splatting without requiring any prior information(focal length, position etc..) except the RGB image set for the scene.
 
 ## Progress
