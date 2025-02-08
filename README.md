@@ -15,6 +15,11 @@ After training each model on the 6 scenes from the [Tanks and Temples](https://w
 <p align="center">
   <img src ="https://github.com/user-attachments/assets/9dcae274-70a5-4286-96af-c5bfd6ab90de" width="750" height="130"/>
 </p>
+
+<p align="center">
+  <img src ="https://github.com/user-attachments/assets/14e85019-d594-4874-b705-f7ae19ea6877" width="700" height="250"/>
+</p>
+
 <p align="center">
   <img src ="https://github.com/user-attachments/assets/0f8262a8-b7f9-4861-8b2d-0b463ca11e40" width="750" height="200"/>
 </p>
