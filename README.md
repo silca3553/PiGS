@@ -2,8 +2,14 @@
 This personal project is implemented for the Research Project 1 (CSED499I) course at POSTECH.
 #### PiGS is a model that performs Gaussian Splatting without requiring any prior information(focal length, position etc..) except the RGB image set for the scene.
 
+## Motivation
+This is based on [InstantSplat](https://github.com/NVlabs/InstantSplat) and aims to overcome its limitation where the training time increases by O(n^2) as the number of input images grows, despite InstantSplat offering fast training speeds. This also applies to GPU memory usage. (24 images exceed 16GB)
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/0c25ca30-d1e1-4ee9-8747-e30085320a16" width="400" height="400"/>
+</p>
+
 ## Progress
-This is based on [InstantSplat](https://github.com/NVlabs/InstantSplat) and aims to overcome its limitation where the training time increases by O(n^2) as the number of input images grows, despite InstantSplat offering fast training speeds. Instead of applying instantSplat to the entire images, we first run it on a subset of the images to obtain the prior Gaussian scene. Then, we simultaneously train the camera positions and Gaussian primitives for the entire images.
+Instead of applying instantSplat to the entire images, we first run it on a subset of the images to obtain the prior Gaussian scene. Then, we simultaneously train the camera positions and Gaussian primitives for the entire images.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/5de57b82-ad28-4a01-8bce-d69556f4eb11" width="550" height="350"/>
